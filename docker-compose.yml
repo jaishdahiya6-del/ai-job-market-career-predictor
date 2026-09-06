@@ -1,0 +1,10 @@
+version: "3.9"
+services:
+  dashboard:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    command: streamlit run app/dashboard.py --server.port 8501 --server.address 0.0.0.0
