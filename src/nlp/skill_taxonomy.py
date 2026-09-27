@@ -3,8 +3,9 @@ Add new skills/categories here -- everything else picks them up automatically.
 Keys are canonical skill names; values are lists of surface-form aliases
 (lowercase) that should normalize to the canonical name.
 """
+from typing import Dict, List, Tuple
 
-SKILL_TAXONOMY = {
+SKILL_TAXONOMY: Dict[str, Dict[str, List[str]]] = {
     "Programming": {
         "python": ["python", "python3"],
         "java": ["java"],
@@ -67,9 +68,13 @@ SKILL_TAXONOMY = {
 }
 
 
-def flat_alias_map():
-    """Returns {alias: (canonical_skill, category)} for fast lookup."""
-    mapping = {}
+def flat_alias_map() -> Dict[str, Tuple[str, str]]:
+    """Returns {alias: (canonical_skill, category)} for fast lookup.
+
+    Returns:
+        Dict[str, Tuple[str, str]]: Mapping from alias string to (canonical_skill, category).
+    """
+    mapping: Dict[str, Tuple[str, str]] = {}
     for category, skills in SKILL_TAXONOMY.items():
         for canonical, aliases in skills.items():
             for alias in aliases:
@@ -77,8 +82,13 @@ def flat_alias_map():
     return mapping
 
 
-def all_skills():
-    out = []
+def all_skills() -> List[Tuple[str, str]]:
+    """Returns a list of all (canonical_skill, category) pairs.
+
+    Returns:
+        List[Tuple[str, str]]: All canonical skills with their respective category.
+    """
+    out: List[Tuple[str, str]] = []
     for category, skills in SKILL_TAXONOMY.items():
         for canonical in skills:
             out.append((canonical, category))

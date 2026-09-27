@@ -1,14 +1,25 @@
-"""SQLite database via SQLAlchemy. Swap DATABASE_URL for a Postgres
-DSN later (e.g. postgresql://user:pass@host/db) with no code changes
-elsewhere, since all access goes through this module's Session."""
+"""Database models and utilities using SQLAlchemy ORM.
+Supports SQLite by default and PostgreSQL via DATABASE_URL environment variable.
+"""
+import ast
 import os
 import datetime as dt
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from pathlib import Path
+from typing import Generator, Optional
+import pandas as pd
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
+
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -25,7 +36,7 @@ class Job(Base):
     industry = Column(String)
     employment_type = Column(String)
     date_posted = Column(DateTime, nullable=True)
-    skills = relationship("JobSkill", back_populates="job")
+    skills = relationship("JobSkill", back_populates="job", cascade="all, delete-orphan")
 
 
 class Skill(Base):
@@ -59,12 +70,16 @@ class Prediction(Base):
     created_at = Column(DateTime, default=dt.datetime.utcnow)
 
 
-def init_db():
-    os.makedirs("data", exist_ok=True)
+def init_db() -> None:
+    """Creates database directories and tables if they do not exist."""
+    db_path = Path("data")
+    db_path.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
+    logger.info("Database initialized successfully at %s", DATABASE_URL)
 
 
-def get_session():
+def get_session() -> Generator[Session, None, None]:
+    """Yields a database session."""
     db = SessionLocal()
     try:
         yield db
@@ -72,15 +87,20 @@ def get_session():
         db.close()
 
 
-def seed_from_processed_csv(csv_path: str = "data/processed/jobs_processed.csv", limit: int = 800):
-    """Populates jobs/skills/job_skills tables from the processed CSV.
-    Safe to re-run: clears existing rows first."""
-    import ast
-    import pandas as pd
+def seed_from_processed_csv(csv_path: str = "data/processed/jobs_processed.csv", limit: int = 800) -> None:
+    """Populates jobs/skills/job_skills tables from processed CSV file.
 
+    Args:
+        csv_path: Path to processed CSV file.
+        limit: Max number of rows to seed.
+    """
     init_db()
     db = SessionLocal()
     try:
+        if not Path(csv_path).exists():
+            logger.error("Processed CSV path '%s' does not exist for seeding", csv_path)
+            return
+
         db.query(JobSkill).delete()
         db.query(Job).delete()
         db.query(Skill).delete()
@@ -102,10 +122,10 @@ def seed_from_processed_csv(csv_path: str = "data/processed/jobs_processed.csv",
                 date_posted=pd.to_datetime(row.get("date_posted"), errors="coerce"),
             )
             db.add(job)
-            db.flush()  # get job.id
+            db.flush()
 
-            skills = row.get("skills_extracted")
-            skills = ast.literal_eval(skills) if isinstance(skills, str) else []
+            skills_raw = row.get("skills_extracted")
+            skills = ast.literal_eval(skills_raw) if isinstance(skills_raw, str) and skills_raw.startswith("[") else []
             for s in skills:
                 if s not in skill_cache:
                     existing = db.query(Skill).filter_by(skill_name=s).first()
@@ -115,8 +135,13 @@ def seed_from_processed_csv(csv_path: str = "data/processed/jobs_processed.csv",
                         db.flush()
                     skill_cache[s] = existing.id
                 db.add(JobSkill(job_id=job.id, skill_id=skill_cache[s]))
+
         db.commit()
-        print(f"Seeded {len(df)} jobs and {len(skill_cache)} distinct skills into the database.")
+        logger.info("Seeded %d jobs and %d distinct skills into the database.", len(df), len(skill_cache))
+    except Exception as e:
+        db.rollback()
+        logger.error("Failed to seed database from CSV: %s", e)
+        raise
     finally:
         db.close()
 

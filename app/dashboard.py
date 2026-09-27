@@ -1,11 +1,11 @@
-"""Main Streamlit dashboard. Run: streamlit run app/dashboard.py
-Talks directly to the src/ modules — fully standalone, no separate
-backend/API process needed.
+"""Main Streamlit dashboard for Career IQ platform.
+Run: streamlit run app/dashboard.py
 """
 import ast
 import sys
 from pathlib import Path
 from collections import Counter
+from typing import Any, List, Optional
 
 import pandas as pd
 import plotly.express as px
@@ -19,6 +19,9 @@ from src.recommendation.recommend import recommend_roles, skill_gap, build_roadm
 from src.nlp.job_analyzer import analyze_job_description
 from src.nlp.resume_analyzer import extract_text_from_pdf, analyze_resume
 from src.nlp.skill_taxonomy import all_skills
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 PROCESSED_PATH = Path(__file__).resolve().parents[1] / "data" / "processed" / "jobs_processed.csv"
 
@@ -95,7 +98,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
-def kpi_card(col, label, value):
+def kpi_card(col: Any, label: str, value: Any) -> None:
     col.markdown(f"""
     <div class="kpi-card">
         <div class="kpi-label">{label}</div>
@@ -104,13 +107,13 @@ def kpi_card(col, label, value):
     """, unsafe_allow_html=True)
 
 
-def badges(items, kind="neutral"):
+def badges(items: List[str], kind: str = "neutral") -> str:
     if not items:
         return "<span style='color:#666'>none</span>"
     return "".join(f"<span class='badge badge-{kind}'>{s}</span>" for s in items)
 
 
-def page_header(icon, title, subtitle):
+def page_header(icon: str, title: str, subtitle: str) -> None:
     st.markdown(f"""
     <div class="hero">
         <h1>{icon} {title}</h1>
@@ -120,14 +123,18 @@ def page_header(icon, title, subtitle):
 
 
 @st.cache_data
-def load_data():
+def load_data() -> Optional[pd.DataFrame]:
     if not PROCESSED_PATH.exists():
         return None
-    df = pd.read_csv(PROCESSED_PATH)
-    df["skills_extracted"] = df["skills_extracted"].apply(
-        lambda s: ast.literal_eval(s) if isinstance(s, str) else []
-    )
-    return df
+    try:
+        df = pd.read_csv(PROCESSED_PATH)
+        df["skills_extracted"] = df["skills_extracted"].apply(
+            lambda s: ast.literal_eval(s) if isinstance(s, str) and s.startswith("[") else []
+        )
+        return df
+    except Exception as e:
+        logger.error("Error loading processed dataset: %s", e)
+        return None
 
 
 df = load_data()
@@ -229,9 +236,10 @@ elif page == "Skills Intelligence":
             counts = sub.groupby("month").size().reset_index(name="count")
             counts["skill"] = skill
             trend_rows.append(counts)
-        trend_df = pd.concat(trend_rows)
-        st.plotly_chart(px.line(trend_df, x="month", y="count", color="skill", markers=True,
-                                 title="Skill Demand Trend Over Time"), use_container_width=True)
+        if trend_rows:
+            trend_df = pd.concat(trend_rows)
+            st.plotly_chart(px.line(trend_df, x="month", y="count", color="skill", markers=True,
+                                     title="Skill Demand Trend Over Time"), use_container_width=True)
 
 # ---------------- Salary Predictor ----------------
 elif page == "Salary Predictor":
@@ -264,45 +272,53 @@ elif page == "Salary Predictor":
             st.caption(result["disclaimer"])
         except FileNotFoundError as e:
             st.error(str(e))
+        except Exception as e:
+            st.error(f"Error executing salary prediction: {e}")
 
 # ---------------- Career Predictor ----------------
 elif page == "Career Predictor":
     page_header("🎯", "Career / Role Recommender", "Tell us your skills — we'll rank the roles that fit best.")
     skills = st.multiselect("Your Skills", ALL_SKILL_NAMES, default=["python", "sql"])
     if st.button("🎯 Recommend Roles") and skills:
-        recs = recommend_roles(skills, top_k=6)
-        for r in recs:
-            st.markdown(f"""
-            <div class="role-card">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span class="role-title">{r['role']}</span>
-                    <span class="role-score">{r['match_score']}% match</span>
+        try:
+            recs = recommend_roles(skills, top_k=6)
+            for r in recs:
+                st.markdown(f"""
+                <div class="role-card">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span class="role-title">{r['role']}</span>
+                        <span class="role-score">{r['match_score']}% match</span>
+                    </div>
                 </div>
-            </div>
-            """, unsafe_allow_html=True)
-            st.progress(min(r["match_score"] / 100, 1.0))
-            st.markdown(f"Matched skills: {badges(r['matched_skills'], 'have')}", unsafe_allow_html=True)
-            st.caption(f"Avg salary in dataset: ₹{r['avg_salary']:,} · {r['n_postings']} postings")
-            st.write("")
+                """, unsafe_allow_html=True)
+                st.progress(min(r["match_score"] / 100, 1.0))
+                st.markdown(f"Matched skills: {badges(r['matched_skills'], 'have')}", unsafe_allow_html=True)
+                st.caption(f"Avg salary in dataset: ₹{r['avg_salary']:,} · {r['n_postings']} postings")
+                st.write("")
+        except Exception as e:
+            st.error(f"Error generating role recommendations: {e}")
 
 # ---------------- Skill Gap ----------------
 elif page == "Skill Gap":
     page_header("🧭", "Skill Gap Analysis", "See exactly what separates you from your target role.")
-    profiles = _load_role_profiles()
-    roles = sorted(profiles.keys())
-    col1, col2 = st.columns(2)
-    with col1:
-        skills = st.multiselect("Your Current Skills", ALL_SKILL_NAMES, default=["python", "sql"])
-    with col2:
-        target = st.selectbox("Target Role", roles)
-    if st.button("🧭 Analyze Gap"):
-        gap = skill_gap(skills, target)
-        st.markdown("**✓ Already have:**", unsafe_allow_html=True)
-        st.markdown(badges(gap["have"], "have"), unsafe_allow_html=True)
-        st.markdown("**⚠ Missing:**", unsafe_allow_html=True)
-        st.markdown(badges(gap["missing"], "missing"), unsafe_allow_html=True)
-        st.markdown("**⭐ Priority to learn:**", unsafe_allow_html=True)
-        st.markdown(badges(gap["priority_to_learn"], "priority"), unsafe_allow_html=True)
+    try:
+        profiles = _load_role_profiles()
+        roles = sorted(profiles.keys())
+        col1, col2 = st.columns(2)
+        with col1:
+            skills = st.multiselect("Your Current Skills", ALL_SKILL_NAMES, default=["python", "sql"])
+        with col2:
+            target = st.selectbox("Target Role", roles)
+        if st.button("🧭 Analyze Gap"):
+            gap = skill_gap(skills, target)
+            st.markdown("**✓ Already have:**", unsafe_allow_html=True)
+            st.markdown(badges(gap["have"], "have"), unsafe_allow_html=True)
+            st.markdown("**⚠ Missing:**", unsafe_allow_html=True)
+            st.markdown(badges(gap["missing"], "missing"), unsafe_allow_html=True)
+            st.markdown("**⭐ Priority to learn:**", unsafe_allow_html=True)
+            st.markdown(badges(gap["priority_to_learn"], "priority"), unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"Error in skill gap analysis: {e}")
 
 # ---------------- Resume Analyzer ----------------
 elif page == "Resume Analyzer":
@@ -327,6 +343,8 @@ elif page == "Resume Analyzer":
                 st.write("**Recommended roles:**", ", ".join(r["role"] for r in recs))
         except ValueError as e:
             st.error(str(e))
+        except Exception as e:
+            st.error(f"Failed to analyze resume PDF: {e}")
 
 # ---------------- Job Analyzer ----------------
 elif page == "Job Analyzer":
@@ -368,10 +386,10 @@ else:
     st.markdown(f"""
     **Career IQ** analyzes job postings, extracts skills via NLP, predicts salaries with a
     trained ML model, and recommends career roles + learning roadmaps based on a user's
-    skill profile — all in one self-contained Streamlit app.
+    skill profile — all in one self-contained Streamlit app and FastAPI service.
 
     Built with Python, scikit-learn/XGBoost, rule-based NLP skill extraction,
-    SQLAlchemy, and Streamlit + Plotly for visualization.
+    SQLAlchemy, FastAPI, and Streamlit + Plotly for visualization.
 
     ⚠️ Currently running on demo/synthetic data — see `data/raw/README.md` for how to
     swap in a real job-postings dataset.
