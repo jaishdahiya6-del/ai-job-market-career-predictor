@@ -1,16 +1,25 @@
 """
 Generates a labeled DEMO dataset (NOT real market data) so the app is
-fully runnable out of the box. Replace data/raw/jobs.csv with a real
-dataset (e.g. a Kaggle job-postings CSV) with the same column names
-to use real data -- see README for the column schema.
+fully runnable out of the box.
 """
 import random
-import pandas as pd
+import sys
 from pathlib import Path
+
+# Add project root to path
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(ROOT))
+
+from typing import Dict, List
+import pandas as pd
+
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 random.seed(42)
 
-ROLES = {
+ROLES: Dict[str, List[str]] = {
     "Data Analyst": ["python", "sql", "excel", "power bi", "tableau", "pandas", "statistics"],
     "Data Scientist": ["python", "pandas", "numpy", "scikit-learn", "statistics", "machine learning", "sql"],
     "ML Engineer": ["python", "pytorch", "tensorflow", "docker", "aws", "scikit-learn", "mlops"],
@@ -41,7 +50,7 @@ SOFT_SKILLS = ["communication", "teamwork", "problem solving", "leadership", "ad
 BASE_SALARY = {"Entry": 500000, "Mid": 1100000, "Senior": 2200000}
 
 
-def make_description(role, skills):
+def make_description(role: str, skills: List[str]) -> str:
     soft = random.sample(SOFT_SKILLS, k=2)
     skill_text = ", ".join(skills)
     return (
@@ -51,7 +60,7 @@ def make_description(role, skills):
     )
 
 
-def generate(n=800):
+def generate(n: int = 800) -> pd.DataFrame:
     rows = []
     for i in range(n):
         role = random.choice(list(ROLES.keys()))
@@ -82,13 +91,14 @@ def generate(n=800):
             "date_posted": pd.Timestamp("2025-01-01") + pd.Timedelta(days=random.randint(0, 240)),
         }
         rows.append(row)
+    logger.info("Generated %d synthetic job postings", n)
     return pd.DataFrame(rows)
 
 
 if __name__ == "__main__":
-    out_dir = Path(__file__).resolve().parents[1] / "data" / "raw"
+    out_dir = ROOT / "data" / "raw"
     out_dir.mkdir(parents=True, exist_ok=True)
     df = generate(800)
     out_path = out_dir / "jobs_demo.csv"
     df.to_csv(out_path, index=False)
-    print(f"DEMO DATA — NOT REAL MARKET DATA. Wrote {len(df)} rows to {out_path}")
+    logger.info("DEMO DATA — NOT REAL MARKET DATA. Wrote %d rows to %s", len(df), out_path)

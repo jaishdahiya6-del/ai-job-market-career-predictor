@@ -1,10 +1,14 @@
 version: "3.9"
 services:
-  dashboard:
+  app:
     build: .
     ports:
       - "8501:8501"
+      - "8000:8000"
     volumes:
       - ./data:/app/data
       - ./models:/app/models
-    command: streamlit run app/dashboard.py --server.port 8501 --server.address 0.0.0.0
+    environment:
+      - DATABASE_URL=sqlite:///./data/app.db
+      - LOG_LEVEL=INFO
+    command: sh -c "uvicorn app.api:app --host 0.0.0.0 --port 8000 & streamlit run app/dashboard.py --server.port 8501 --server.address 0.0.0.0"
